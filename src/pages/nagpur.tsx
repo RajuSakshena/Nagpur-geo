@@ -36,12 +36,13 @@ const LAYERS: LayerMeta[] = [
 
 // ─── Smooth heatmap color helpers ────────────────────────────────────────────
 
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * Math.clamp(t, 0, 1);
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
 }
 
-// Clamp polyfill
-Math.clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * clamp(t, 0, 1);
+}
 
 function lerpColor(
   r1: number, g1: number, b1: number,
@@ -53,7 +54,7 @@ function lerpColor(
 
 function bandToColor(band: number, val: number): string | null {
   if (val === null || val === undefined || isNaN(val)) return null;
-  const n = Math.clamp(val / 255, 0, 1);
+  const n = clamp(val / 255, 0, 1);
 
   switch (band) {
     case 0: { // NDVI — smooth red→yellow→green
