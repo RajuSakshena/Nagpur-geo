@@ -81,7 +81,7 @@ const BAND_RANGE: Record<number, [number, number]> = {
   2: [0, 1],      // Water mask
   3: [15, 45],    // Temperature °C
   4: [0, 200],    // Rainfall mm
-  5: [0, 100],    // Soil moisture %
+  5: [0, 1],      // Soil moisture (fractional 0–1, display as %)
   6: [0, 1],      // GeoPoints
 };
 
@@ -177,7 +177,14 @@ function bandToReadable(band: number, raw: number): string {
     case 2: return `${(raw / 255 * 100).toFixed(1)}%`;
     case 3: return `${(15 + (raw / 255) * 30).toFixed(1)}°C`;
     case 4: return `${(raw / 255 * 200).toFixed(1)} mm`;
-    case 5: return `${(raw / 255 * 100).toFixed(1)}%`;
+    case 5: {
+      console.log("Soil raw:", raw);
+      // If values are 0–1 (fractional), multiply by 100 for percentage.
+      // If values are already 0–100, use raw directly.
+      return raw <= 1
+        ? `${(raw * 100).toFixed(1)}%`
+        : `${raw.toFixed(1)}%`;
+    }
     default: return raw.toFixed(1);
   }
 }
