@@ -6,7 +6,6 @@ import parseGeoraster from "georaster";
 import {
   PieChart, Pie, Cell, Tooltip as ReTooltip,
   BarChart, Bar, XAxis, YAxis, ResponsiveContainer,
-  RadialBarChart, RadialBar,
 } from "recharts";
 import {
   Layers, Leaf, Map, Droplets, Thermometer,
@@ -168,75 +167,7 @@ function bandToColor(band: number, val: number): string | null {
   }
 }
 
-// ─── Legend config ────────────────────────────────────────────────────────────
 
-const LAYER_LEGENDS: Record<number, { label: string; color: string }[]> = {
-  0: [
-    { label: "Low veg (< 0.2)",    color: "#dc2626" },
-    { label: "Moderate (0.2–0.5)", color: "#facc15" },
-    { label: "High veg (> 0.5)",   color: "#22c55e" },
-  ],
-  1: [
-    { label: "Water body",  color: "#2563eb" },
-    { label: "Urban",       color: "#64748b" },
-    { label: "Cropland",    color: "#4ade80" },
-    { label: "Forest",      color: "#15803d" },
-    { label: "Bare / other",color: "#fbbf24" },
-  ],
-  2: [
-    { label: "Low coverage",  color: "#bae6fd" },
-    { label: "Medium",        color: "#0ea5e9" },
-    { label: "High coverage", color: "#075985" },
-  ],
-  3: [
-    { label: "Cool (< 25°C)",  color: "#22c55e" },
-    { label: "Warm (25–35°C)", color: "#f97316" },
-    { label: "Hot (> 35°C)",   color: "#7f1d1d" },
-  ],
-  4: [
-    { label: "Light rain",  color: "#bfdbfe" },
-    { label: "Moderate",    color: "#3b82f6" },
-    { label: "Heavy rain",  color: "#1e1b4b" },
-  ],
-  5: [
-    { label: "Dry",      color: "#92400e" },
-    { label: "Moderate", color: "#a3e635" },
-    { label: "Wet",      color: "#15803d" },
-  ],
-  6: [
-    { label: "Point of Interest", color: "#dc2626" },
-  ],
-};
-
-function MapLegend({ activeLayer }: { activeLayer: number }) {
-  const meta   = LAYERS.find(l => l.band === activeLayer) ?? LAYERS[0];
-  const items  = activeLayer === -1
-    ? [
-        { label: "Low NDVI (sparse veg)",  color: "#86efac" },
-        { label: "Med NDVI (mixed)",        color: "#22c55e" },
-        { label: "High NDVI (dense veg)",   color: "#15803d" },
-      ]
-    : LAYER_LEGENDS[activeLayer] ?? [];
-  return (
-    <div style={{ position: "absolute", bottom: 24, left: 244, zIndex: 500 }}>
-      <div style={{
-        background: "rgba(255,255,255,0.96)", border: "1px solid #e5e7eb",
-        borderRadius: 14, boxShadow: "0 4px 18px rgba(0,0,0,0.08)",
-        padding: "10px 14px", minWidth: 152,
-      }}>
-        <p style={{ fontSize: 9.5, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 8 }}>
-          {meta.name} Legend
-        </p>
-        {items.map(item => (
-          <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
-            <span style={{ width: 12, height: 12, borderRadius: 3, background: item.color, flexShrink: 0, display: "inline-block" }} />
-            <span style={{ fontSize: 11, color: "#374151" }}>{item.label}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 function bandToReadable(band: number, raw: number): string {
   if (raw === null || raw === undefined || isNaN(raw)) return "—";
