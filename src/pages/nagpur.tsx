@@ -825,7 +825,7 @@ function LayerLegend({ activeLayer, activeMeta, pixelVals }: {
 
   return (
     <div style={{ position: "absolute", bottom: 24, left: 16, zIndex: 500 }}>
-      <Card style={{ padding: "12px 16px", minWidth: 232 }}>
+      <Card style={{ padding: "8px 12px", minWidth: 170 }}>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
           <Activity size={12} color="#0ea5e9" />
@@ -833,16 +833,16 @@ function LayerLegend({ activeLayer, activeMeta, pixelVals }: {
             Colour Legend
           </span>
         </div>
-        <p style={{ fontSize: 13, fontWeight: 700, color: "#111827", marginBottom: 8 }}>{activeMeta.name}</p>
+        <p style={{ fontSize: 11, fontWeight: 700, color: "#111827", marginBottom: 6 }}>{activeMeta.name}</p>
 
         {activeLayer === -1 ? (
-          /* ── All Layers: one mini gradient row per band ── */
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          /* ── All Layers: compact two-column grid ── */
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 3 }}>
             {ALL_BAND_META.map(({ label }, i) => (
-              <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
-                background: "#f8fafc", borderRadius: 7, padding: "5px 9px" }}>
-                <span style={{ fontSize: 10, color: "#475569", fontWeight: 600 }}>{label}</span>
-                <span style={{ fontSize: 11, color: "#0284c7", fontWeight: 700, fontFamily: "monospace" }}>
+              <div key={label} style={{ display: "flex", flexDirection: "column",
+                background: "#f8fafc", borderRadius: 5, padding: "3px 6px" }}>
+                <span style={{ fontSize: 8.5, color: "#94a3b8", fontWeight: 600 }}>{label}</span>
+                <span style={{ fontSize: 9.5, color: "#0284c7", fontWeight: 700, fontFamily: "monospace" }}>
                   {pixelVals ? bandToReadable(ALL_BAND_META[i].band, pixelVals[ALL_BAND_META[i].band]) : "—"}
                 </span>
               </div>
