@@ -823,16 +823,6 @@ function LayerLegend({ activeLayer, activeMeta, pixelVals }: {
     return bandToReadable(activeLayer, pixelVals[activeLayer]);
   }, [pixelVals, activeLayer]);
 
-  // Per-band norms for All layers view
-  const allNorms = useMemo(() => {
-    if (activeLayer !== -1 || !pixelVals) return null;
-    return ALL_BAND_META.map(({ band, lo, hi }) => {
-      const v = pixelVals[band];
-      if (v === null || v === undefined || isNaN(v)) return null;
-      return Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
-    });
-  }, [pixelVals, activeLayer]);
-
   return (
     <div style={{ position: "absolute", bottom: 24, left: 16, zIndex: 500 }}>
       <Card style={{ padding: "12px 16px", minWidth: 232 }}>
@@ -914,11 +904,10 @@ const TOOLTIP_FIELDS: { label: string; band: number; color: string }[] = [
   { label: "Soil Moisture",band: 5, color: "#a16207" },
 ];
 
-function MapTooltip({ pixelVals, mousePos, activeLayer, hoverTick }: { 
+function MapTooltip({ pixelVals, mousePos, activeLayer }: { 
   pixelVals: number[] | null; 
   mousePos: { x: number; y: number }; 
   activeLayer: number;
-  hoverTick: number;
 }) {
   if (!pixelVals) return null;
 
@@ -956,14 +945,12 @@ export default function Nagpur() {
   const [activeLayer, setActiveLayer] = useState<number>(-1);
   const [loading,     setLoading]     = useState(true);
   const [pixelVals,   setPixelVals]   = useState<number[] | null>(null);
-  const [hoverTick,   setHoverTick]   = useState(0);
   const [mapType,     setMapType]     = useState<MapType>("osm");
   const [boundaryData, setBoundaryData] = useState<any>(null);
 
   const mapRef = useRef<any>(null);
 
   const activeMeta = LAYERS.find(l => l.band === activeLayer) ?? LAYERS[0];
-  const stats      = useMemo(() => LAYER_STATS[activeLayer] ?? {}, [activeLayer]);
 
   // Mouse position stored in ref
   const mousePosRef = useRef({ x: 0, y: 0 });
@@ -1016,7 +1003,6 @@ export default function Nagpur() {
 
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(() => {
-      setHoverTick(t => t + 1);
     });
   }, []);
 
@@ -1111,7 +1097,6 @@ export default function Nagpur() {
           pixelVals={pixelVals} 
           mousePos={mousePosRef.current} 
           activeLayer={activeLayer} 
-          hoverTick={hoverTick}
         />
       </div>
 
