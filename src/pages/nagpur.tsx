@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from "react";
-import { MapContainer, TileLayer, useMap, useMapEvents } from "react-leaflet";
+import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import { MapContainer, TileLayer, useMap, useMapEvents, GeoJSON } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import GeoRasterLayer from "georaster-layer-for-leaflet";
 import parseGeoraster from "georaster";
@@ -9,7 +9,7 @@ import {
 } from "recharts";
 import {
   Layers, Leaf, Map, Droplets, Thermometer,
-  CloudRain, Sprout, MapPin, Plus, Minus,
+  CloudRain, Sprout, Plus, Minus,
   Activity, Satellite, Globe,
 } from "lucide-react";
 
@@ -37,7 +37,6 @@ const LAYERS: LayerMeta[] = [
   { name: "Temperature",   band: 3, icon: Thermometer, desc: "Land Surface Temp",  dotColor: "#f97316" },
   { name: "Rainfall",      band: 4, icon: CloudRain,   desc: "Precipitation",      dotColor: "#3b82f6" },
   { name: "Soil Moisture", band: 5, icon: Sprout,      desc: "Soil Moisture",      dotColor: "#a16207" },
-  { name: "GeoPoints",     band: 6, icon: MapPin,      desc: "Points of Interest", dotColor: "#ef4444" },
 ];
 
 // ─── Layer stats (single source of truth) ────────────────────────────────────
@@ -52,10 +51,6 @@ const LAYER_STATS: Record<number, Record<string, any>> = {
         { month: "Apr", mm: 22 }, { month: "May", mm: 48 }, { month: "Jun", mm: 142 },
       ] },
   5: { name: "Soil Moisture", avg: 38.7,  good: 42, medium: 38, bad: 20,  unit: "%",    label: "Avg Moisture" },
-  6: { name: "GeoPoints",     count: 1245, clusters: [
-        { zone: "North", count: 312 }, { zone: "South", count: 278 },
-        { zone: "East",  count: 421 }, { zone: "West",  count: 234 },
-      ] },
 };
 
 // ─── Basemap definitions ──────────────────────────────────────────────────────
@@ -70,11 +65,6 @@ const BASEMAPS: { id: MapType; label: string; icon: React.ElementType }[] = [
 
 // ─── Color / heatmap helpers ─────────────────────────────────────────────────
 
-/**
- * Per‑band expected data ranges (raw pixel values in GeoTIFF).
- * We stretch each band's actual range → 0..1 so colors ALWAYS span
- * the full palette regardless of how the data was encoded.
- */
 const BAND_RANGE: Record<number, [number, number]> = {
   0: [-1, 1],     // NDVI
   1: [0, 255],    // LULC
@@ -82,7 +72,6 @@ const BAND_RANGE: Record<number, [number, number]> = {
   3: [15, 45],    // Temperature °C
   4: [0, 200],    // Rainfall mm
   5: [0, 1],      // Soil moisture (fractional 0–1, display as %)
-  6: [0, 1],      // GeoPoints
 };
 
 /** Safe stretch with proper bounds */
@@ -117,70 +106,63 @@ function multiStop(stops: number[][], t: number, op: number): string {
 }
 
 // Colour stops for each band
-const NDVI_STOPS   = [[180,0,0],[239,68,68],[250,204,21],[163,230,53],[34,197,94],[21,128,61]];
-const TEMP_STOPS   = [[34,197,94],[163,230,53],[250,204,21],[251,146,60],[239,68,68],[127,29,29]];
+const NDVI_STOPS   = [[239,68,68],[251,146,60],[250,204,21],[163,230,53],[34,197,94],[21,128,61]];
+const TEMP_STOPS   = [[254,252,232],[253,224,71],[234,179,8],[202,138,4],[161,98,7],[120,53,15]];
 const RAIN_STOPS   = [[219,234,254],[147,197,253],[96,165,250],[59,130,246],[29,78,216],[30,27,75]];
 const MOIST_STOPS  = [[146,64,14],[217,119,6],[253,224,71],[163,230,53],[34,197,94],[21,128,61]];
 const WATER_STOPS  = [[224,242,254],[125,211,252],[14,165,233],[2,132,199],[7,89,133],[12,74,110]];
 
 function bandToColor(band: number, val: number): string | null {
   if (val === null || val === undefined || isNaN(val)) return null;
-  if (val === 0 && band !== 0 && band !== 6) return null;
+
+  // For LULC (band 1): single green hue, light → dark based on value
+  if (band === 1) {
+    const t = Math.max(0, Math.min(1, (val - 10) / 90));
+    const r = Math.round(180 - t * 130); // 180 → 50
+    const g = Math.round(210 - t * 120); // 210 → 90
+    const b = Math.round(120 - t * 90);  // 120 → 30
+    return `rgba(${r},${g},${b},0.88)`;
+  }
 
   const n = stretch(val, band);
 
   switch (band) {
-    case 0: {
-      const op = 0.55 + n * 0.35;
-      return multiStop(NDVI_STOPS, n, op);
-    }
-    case 1: {
-      if (val <= 50)  return "rgba(37,99,235,0.80)";
-      if (val <= 100) return "rgba(100,116,139,0.78)";
-      if (val <= 150) return "rgba(74,222,128,0.78)";
-      if (val <= 200) return "rgba(21,128,61,0.80)";
-      return "rgba(251,191,36,0.78)";
-    }
-    case 2: {
-      if (n < 0.05) return null;
-      const op = 0.45 + n * 0.45;
-      return multiStop(WATER_STOPS, n, op);
-    }
-    case 3: {
-      return multiStop(TEMP_STOPS, n, 0.72);
-    }
-    case 4: {
-      if (n < 0.04) return null;
-      const op = 0.50 + n * 0.40;
-      return multiStop(RAIN_STOPS, n, op);
-    }
-    case 5: {
-      return multiStop(MOIST_STOPS, n, 0.75);
-    }
-    case 6: {
-      return val > 0 ? "rgba(220,38,38,0.90)" : null;
-    }
+    case 0: return multiStop(NDVI_STOPS, n, 0.86);
+    case 2: return multiStop(WATER_STOPS, n, 0.78);
+    case 3: return multiStop(TEMP_STOPS, n, 0.82);
+    case 4: return multiStop(RAIN_STOPS, n, 0.80);
+    case 5: return multiStop(MOIST_STOPS, n, 0.82);
     default: {
       const g = Math.round(n * 255);
-      return `rgba(${g},${g},${g},0.65)`;
+      return `rgba(${g},${g},${g},0.75)`;
     }
   }
 }
-
-
 
 function bandToReadable(band: number, raw: number): string {
   if (raw === null || raw === undefined || isNaN(raw)) return "—";
   switch (band) {
     case 0: return raw.toFixed(2);
-    case 1: { if (raw < 60) return "Water"; if (raw < 150) return "Urban"; return "Vegetation"; }
+    case 1: {
+      switch (Math.round(raw)) {
+        case 10:  return "Tree Cover";
+        case 20:  return "Shrubland";
+        case 30:  return "Grassland";
+        case 40:  return "Cropland";
+        case 50:  return "Built-up";
+        case 60:  return "Bare";
+        case 70:  return "Snow";
+        case 80:  return "Water";
+        case 90:  return "Wetland";
+        case 95:  return "Mangroves";
+        case 100: return "Moss";
+        default:  return "Unknown";
+      }
+    }
     case 2: return `${(raw / 255 * 100).toFixed(1)}%`;
     case 3: return `${(15 + (raw / 255) * 30).toFixed(1)}°C`;
     case 4: return `${(raw / 255 * 200).toFixed(1)} mm`;
     case 5: {
-      console.log("Soil raw:", raw);
-      // If values are 0–1 (fractional), multiply by 100 for percentage.
-      // If values are already 0–100, use raw directly.
       return raw <= 1
         ? `${(raw * 100).toFixed(1)}%`
         : `${raw.toFixed(1)}%`;
@@ -269,12 +251,6 @@ function AnalyticsContent({ activeLayer }: { activeLayer: number }) {
         { label: "Avg Moisture", value: `${stats.avg}%`,   accent: "#84cc16", bg: "#f7fee7", icon: Sprout },
         { label: "Wet Zones",    value: `${stats.good}%`,  accent: "#16a34a", bg: "#f0fdf4", icon: Activity },
         { label: "Dry Zones",    value: `${stats.bad}%`,   accent: "#92400e", bg: "#fef3c7", icon: Activity },
-      ]} />
-    );
-    if (activeLayer === 6) return (
-      <SummaryGrid items={[
-        { label: "Total Points", value: stats.count.toLocaleString(), accent: "#ef4444", bg: "#fef2f2", icon: MapPin },
-        { label: "Largest Zone", value: "East (421)",                 accent: "#f97316", bg: "#fff7ed", icon: Activity },
       ]} />
     );
     return null;
@@ -382,19 +358,6 @@ function AnalyticsContent({ activeLayer }: { activeLayer: number }) {
               </div>
             </div>
           ))}
-        </Card>
-      )}
-      {activeLayer === 6 && stats.clusters && (
-        <Card style={{ padding: "14px 16px" }}>
-          <p style={sectionLabel}>Points by Zone</p>
-          <ResponsiveContainer width="100%" height={88}>
-            <BarChart data={stats.clusters} margin={{ top: 0, right: 0, bottom: 0, left: -24 }}>
-              <XAxis dataKey="zone" tick={{ fill: "#9ca3af", fontSize: 9 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: "#9ca3af", fontSize: 9 }} axisLine={false} tickLine={false} />
-              <ReTooltip contentStyle={tooltipStyle} itemStyle={{ color: "#374151" }} cursor={{ fill: "rgba(0,0,0,0.025)" }} />
-              <Bar dataKey="count" fill="#ef4444" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
         </Card>
       )}
       {activeLayer === 3 && (
@@ -527,6 +490,17 @@ function MapControls({ mapType, setMapType }: { mapType: MapType; setMapType: (t
   );
 }
 
+// ─── Map Instance Helper ─────────────────────────────────────────────────────
+function MapInstance({ setMap }: { setMap: (map: any) => void }) {
+  const map = useMap();
+
+  useEffect(() => {
+    setMap(map);
+  }, [map, setMap]);
+
+  return null;
+}
+
 // ─── Basemap tiles ────────────────────────────────────────────────────────────
 
 function BasemapTiles({ mapType }: { mapType: MapType }) {
@@ -561,45 +535,95 @@ function BasemapTiles({ mapType }: { mapType: MapType }) {
   );
 }
 
-// ─── GeoTIFF layer ────────────────────────────────────────────────────────────
+// ─── Optimized & Stable GeoTIFF Layer with Cache Busting ─────────────────────
 
-function GeoTiffLayer({
+const GeoTiffLayer = React.memo(({
   url, band, onLoad, onPixelHover,
 }: {
   url: string;
   band: number;
   onLoad: () => void;
   onPixelHover: (vals: number[] | null) => void;
-}) {
+}) => {
   const map = useMap();
-  const layerRef     = useRef<any>(null);
+  const layerRef = useRef<any>(null);
   const georasterRef = useRef<any>(null);
+  const lastHoverTime = useRef(0);
+
+  // Stabilized color function using ref
+  const colorFnRef = useRef<(vals: number[]) => string | null>(() => null);
+
+  useEffect(() => {
+    colorFnRef.current = (vals: number[]) => {
+      if (!vals || !vals.length) return null;
+
+      if (band === -1) {
+        // Composite: average all available bands normalised, show as teal→indigo palette
+        const ranges: [number,number,number][] = [
+          [0,-1,1],[2,0,1],[3,15,45],[4,0,200],[5,0,1],
+        ];
+        let sum = 0, count = 0;
+        for (const [bi, lo, hi] of ranges) {
+          const v = vals[bi];
+          if (v !== null && v !== undefined && !isNaN(v)) {
+            sum += Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+            count++;
+          }
+        }
+        if (count === 0) return null;
+        const n = sum / count;
+        return multiStop(
+          [[254,252,232],[253,224,71],[251,146,60],[239,68,68],[185,28,28],[127,29,29]],
+          n,
+          0.84
+        );
+      }
+
+      const value = vals[band];
+      return bandToColor(band, value);
+    };
+  }, [band]);
+
+  const pixelValuesToColorFn = useCallback((vals: number[]) => {
+    return colorFnRef.current(vals);
+  }, []);
 
   useMapEvents({
     mousemove(e) {
+      const now = Date.now();
+      if (now - lastHoverTime.current < 80) return;
+      lastHoverTime.current = now;
+
       const gr = georasterRef.current;
-      if (!gr) { onPixelHover(null); return; }
+      if (!gr) {
+        onPixelHover(null);
+        return;
+      }
       try {
         const { lat, lng } = e.latlng;
         const { xmin, xmax, ymin, ymax, width, height, values } = gr;
         const col = Math.floor(((lng - xmin) / (xmax - xmin)) * width);
         const row = Math.floor(((ymax - lat) / (ymax - ymin)) * height);
-        if (col < 0 || col >= width || row < 0 || row >= height) { onPixelHover(null); return; }
-        onPixelHover(values.map((b: number[][]) => b[row]?.[col] ?? NaN));
-      } catch { onPixelHover(null); }
+        if (col < 0 || col >= width || row < 0 || row >= height) {
+          onPixelHover(null);
+          return;
+        }
+        const pixelVals = values.map((b: number[][]) => b[row]?.[col] ?? NaN);
+        onPixelHover([...pixelVals]);
+      } catch {
+        onPixelHover(null);
+      }
     },
-    mouseout() { onPixelHover(null); },
+    mouseout() {
+      onPixelHover(null);
+    },
   });
 
-  useEffect(() => {
-    if (layerRef.current) {
-      layerRef.current.redraw();
-    }
-  }, [band]);
-
+  // Main layer creation effect
   useEffect(() => {
     let cancelled = false;
 
+    // Clean up previous layer
     if (layerRef.current) {
       map.removeLayer(layerRef.current);
       layerRef.current = null;
@@ -616,56 +640,61 @@ function GeoTiffLayer({
         georasterRef.current = gr;
         onLoad();
 
-        const newLayer = new GeoRasterLayer({
+        const newLayer = new (GeoRasterLayer as any)({
           georaster: gr,
-          opacity: 0.74,
-          resolution: 256,
-          keepBuffer: 0,
-          updateWhenZooming: true,
+          opacity: 0.85,
+          resolution: 256 + Math.abs(band) * 4, // Dynamic resolution to help bust cache
+          keepBuffer: 2,
           updateWhenIdle: false,
-          pixelValuesToColorFn: (vals: number[]) => {
-            if (!vals || !vals.length) return null;
-
-            // ALL mode: render NDVI-based green heatmap
-            if (band === -1) {
-              const ndvi = vals[0];
-              if (ndvi === null || ndvi === undefined || isNaN(ndvi)) return null;
-              const n = Math.max(0, Math.min(1, (ndvi + 1) / 2)); // normalize -1..1 → 0..1
-              return `rgba(34,197,94,${(0.4 + n * 0.5).toFixed(2)})`; // green heatmap
-            }
-
-            const value = vals[band];
-            return bandToColor(band, value);
-          },
+          updateWhenZooming: true,
+          resampleMethod: band === 1 ? "nearest" : "bilinear",
+          pixelValuesToColorFn: pixelValuesToColorFn,
         });
 
         newLayer.addTo(map);
         layerRef.current = newLayer;
-
-        newLayer.redraw();
       })
       .catch(console.error);
 
-    const onZoomEnd = () => {
-      if (layerRef.current) {
-        layerRef.current.redraw();
-      }
-    };
-    map.on("zoomend", onZoomEnd);
-
     return () => {
       cancelled = true;
-      map.off("zoomend", onZoomEnd);
       if (layerRef.current) {
         map.removeLayer(layerRef.current);
         layerRef.current = null;
       }
       georasterRef.current = null;
     };
-  }, [url, band]);
+  }, [url, map, onLoad, pixelValuesToColorFn, band]); // Added band dependency
+
+  // 🔥 Force cache clear + redraw when color function or band changes
+  useEffect(() => {
+    if (layerRef.current) {
+      // Update color function
+      layerRef.current.options.pixelValuesToColorFn = pixelValuesToColorFn;
+
+      // Clear internal tile cache aggressively
+      if (layerRef.current._cache) {
+        layerRef.current._cache = {};
+      }
+      if (layerRef.current._tileCache) {
+        layerRef.current._tileCache = {};
+      }
+      if (layerRef.current._tiles) {
+        layerRef.current._tiles = {};
+      }
+
+      // Reset internal state if available
+      if (typeof layerRef.current._reset === 'function') {
+        layerRef.current._reset();
+      }
+
+      // Force full redraw
+      layerRef.current.redraw();
+    }
+  }, [pixelValuesToColorFn, band]);
 
   return null;
-}
+});
 
 // ─── Layers dropdown ──────────────────────────────────────────────────────────
 
@@ -746,6 +775,134 @@ function LayersDropdown({ activeLayer, onSelect }: { activeLayer: number; onSele
   );
 }
 
+// ─── Layer Legend (colour scale + live value indicator) ──────────────────────
+
+const LAYER_LEGEND_CONFIG: Record<number, {
+  gradient: string;
+  lowLabel: string;
+  highLabel: string;
+  unit: string;
+}> = {
+  [-1]: { gradient: "linear-gradient(to right,#fefce8,#fde047,#fb923c,#ef4444,#b91c1c,#7f1d1d)", lowLabel: "Low avg", highLabel: "High avg", unit: "" },
+  0:  { gradient: "linear-gradient(to right,#ef4444,#fb923c,#facc15,#a3e635,#22c55e,#15803d)", lowLabel: "−1 (Bare)", highLabel: "+1 (Dense)", unit: "" },
+  1:  { gradient: "linear-gradient(to right,#b4d2a0,#78b062,#4a8c3f,#2d6b28,#1a4d18,#0d3209)", lowLabel: "Low (10)", highLabel: "High (100)", unit: "" },
+  2:  { gradient: "linear-gradient(to right,#e0f2fe,#7dd3fc,#0ea5e9,#0369a1,#075985,#0c4a6e)", lowLabel: "0% (Dry)", highLabel: "100% (Wet)", unit: "" },
+  3:  { gradient: "linear-gradient(to right,#fefce8,#fde047,#eab308,#ca8a04,#a16207,#78350f)", lowLabel: "15°C (Cool)", highLabel: "45°C (Hot)", unit: "°C" },
+  4:  { gradient: "linear-gradient(to right,#dbeafe,#93c5fd,#60a5fa,#3b82f6,#1d4ed8,#1e1b4b)", lowLabel: "0 mm (Dry)", highLabel: "200 mm (Heavy)", unit: "mm" },
+  5:  { gradient: "linear-gradient(to right,#92400e,#d97706,#fde047,#a3e635,#22c55e,#15803d)", lowLabel: "0% (Dry)", highLabel: "100% (Wet)", unit: "%" },
+};
+
+// Per-band config for "All layers" breakdown rows
+const ALL_BAND_META = [
+  { band: 0, label: "NDVI",         grad: "linear-gradient(to right,#ef4444,#facc15,#22c55e,#15803d)", lo: -1, hi: 1  },
+  { band: 1, label: "LULC",         grad: "linear-gradient(to right,#b4d2a0,#78b062,#4a8c3f,#2d6b28,#0d3209)", lo: 10, hi: 100 },
+  { band: 2, label: "Water",        grad: "linear-gradient(to right,#e0f2fe,#38bdf8,#0284c7,#0c4a6e)", lo: 0,  hi: 1  },
+  { band: 3, label: "Temperature",  grad: "linear-gradient(to right,#fefce8,#fde047,#eab308,#ca8a04,#78350f)", lo: 15, hi: 45 },
+  { band: 4, label: "Rainfall",     grad: "linear-gradient(to right,#dbeafe,#60a5fa,#2563eb,#1e1b4b)", lo: 0,  hi: 200 },
+  { band: 5, label: "Soil Moist.",  grad: "linear-gradient(to right,#92400e,#d97706,#a3e635,#15803d)", lo: 0,  hi: 1  },
+];
+
+function LayerLegend({ activeLayer, activeMeta, pixelVals }: {
+  activeLayer: number;
+  activeMeta: LayerMeta;
+  pixelVals: number[] | null;
+}) {
+  const cfg = LAYER_LEGEND_CONFIG[activeLayer] ?? LAYER_LEGEND_CONFIG[-1];
+
+  // Normalised position for individual layer marker
+  const norm = useMemo(() => {
+    if (!pixelVals || activeLayer === -1) return null;
+    const v = pixelVals[activeLayer];
+    if (v === null || v === undefined || isNaN(v)) return null;
+    const [lo, hi] = BAND_RANGE[activeLayer] ?? [0, 1];
+    return Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+  }, [pixelVals, activeLayer]);
+
+  const liveValue = useMemo(() => {
+    if (!pixelVals || activeLayer === -1) return null;
+    return bandToReadable(activeLayer, pixelVals[activeLayer]);
+  }, [pixelVals, activeLayer]);
+
+  // Per-band norms for All layers view
+  const allNorms = useMemo(() => {
+    if (activeLayer !== -1 || !pixelVals) return null;
+    return ALL_BAND_META.map(({ band, lo, hi }) => {
+      const v = pixelVals[band];
+      if (v === null || v === undefined || isNaN(v)) return null;
+      return Math.max(0, Math.min(1, (v - lo) / (hi - lo)));
+    });
+  }, [pixelVals, activeLayer]);
+
+  return (
+    <div style={{ position: "absolute", bottom: 24, left: 16, zIndex: 500 }}>
+      <Card style={{ padding: "12px 16px", minWidth: 232 }}>
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+          <Activity size={12} color="#0ea5e9" />
+          <span style={{ fontSize: 9.5, color: "#9ca3af", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em" }}>
+            Colour Legend
+          </span>
+        </div>
+        <p style={{ fontSize: 13, fontWeight: 700, color: "#111827", marginBottom: 8 }}>{activeMeta.name}</p>
+
+        {activeLayer === -1 ? (
+          /* ── All Layers: one mini gradient row per band ── */
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {ALL_BAND_META.map(({ label }, i) => (
+              <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+                background: "#f8fafc", borderRadius: 7, padding: "5px 9px" }}>
+                <span style={{ fontSize: 10, color: "#475569", fontWeight: 600 }}>{label}</span>
+                <span style={{ fontSize: 11, color: "#0284c7", fontWeight: 700, fontFamily: "monospace" }}>
+                  {pixelVals ? bandToReadable(ALL_BAND_META[i].band, pixelVals[ALL_BAND_META[i].band]) : "—"}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          /* ── Individual layer: single gradient + marker ── */
+          <>
+            <div style={{ position: "relative", marginBottom: 4 }}>
+              <div style={{
+                height: 10, borderRadius: 99,
+                background: cfg.gradient,
+                boxShadow: "inset 0 1px 3px rgba(0,0,0,0.12)",
+              }} />
+              {norm !== null && (
+                <div style={{
+                  position: "absolute",
+                  left: `calc(${(norm * 100).toFixed(1)}% - 5px)`,
+                  top: -3, width: 10, height: 16,
+                  borderRadius: 3,
+                  background: "#fff",
+                  border: "2px solid #374151",
+                  boxShadow: "0 1px 4px rgba(0,0,0,0.25)",
+                  transition: "left 0.15s",
+                  pointerEvents: "none",
+                }} />
+              )}
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+              <span style={{ fontSize: 9, color: "#6b7280", fontWeight: 500 }}>{cfg.lowLabel}</span>
+              <span style={{ fontSize: 9, color: "#6b7280", fontWeight: 500 }}>{cfg.highLabel}</span>
+            </div>
+            <div style={{
+              background: liveValue ? "#f0f9ff" : "#f8fafc",
+              border: "1px solid #e0f2fe",
+              borderRadius: 8, padding: "5px 10px",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+            }}>
+              <span style={{ fontSize: 10, color: "#64748b" }}>Hover value</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: liveValue ? "#0284c7" : "#94a3b8", fontFamily: "monospace" }}>
+                {liveValue ?? "—"}
+              </span>
+            </div>
+          </>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 // ─── Tooltip ─────────────────────────────────────────────────────────────────
 
 const TOOLTIP_FIELDS: { label: string; band: number; color: string }[] = [
@@ -757,10 +914,14 @@ const TOOLTIP_FIELDS: { label: string; band: number; color: string }[] = [
   { label: "Soil Moisture",band: 5, color: "#a16207" },
 ];
 
-function MapTooltip({ pixelVals, mousePos, activeLayer }: { pixelVals: number[] | null; mousePos: { x: number; y: number }; activeLayer: number }) {
+function MapTooltip({ pixelVals, mousePos, activeLayer, hoverTick }: { 
+  pixelVals: number[] | null; 
+  mousePos: { x: number; y: number }; 
+  activeLayer: number;
+  hoverTick: number;
+}) {
   if (!pixelVals) return null;
 
-  // ALL mode: show all fields; specific layer: show only that layer
   const fieldsToShow =
     activeLayer === -1
       ? TOOLTIP_FIELDS
@@ -789,32 +950,82 @@ function MapTooltip({ pixelVals, mousePos, activeLayer }: { pixelVals: number[] 
   );
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// ─── Main Component ──────────────────────────────────────────────────────────
 
 export default function Nagpur() {
   const [activeLayer, setActiveLayer] = useState<number>(-1);
   const [loading,     setLoading]     = useState(true);
   const [pixelVals,   setPixelVals]   = useState<number[] | null>(null);
-  const [mousePos,    setMousePos]    = useState({ x: 0, y: 0 });
+  const [hoverTick,   setHoverTick]   = useState(0);
   const [mapType,     setMapType]     = useState<MapType>("osm");
-  const [fadeKey,     setFadeKey]     = useState(0);
+  const [boundaryData, setBoundaryData] = useState<any>(null);
+
+  const mapRef = useRef<any>(null);
 
   const activeMeta = LAYERS.find(l => l.band === activeLayer) ?? LAYERS[0];
   const stats      = useMemo(() => LAYER_STATS[activeLayer] ?? {}, [activeLayer]);
 
+  // Mouse position stored in ref
+  const mousePosRef = useRef({ x: 0, y: 0 });
+  const rafRef = useRef<number | null>(null);
+
+  // Load Nagpur Boundary GeoJSON
+  useEffect(() => {
+    fetch("/Nagpur_boundary.geojson")
+      .then(res => res.json())
+      .then(data => setBoundaryData(data))
+      .catch(err => console.error("Failed to load Nagpur boundary GeoJSON:", err));
+  }, []);
+
   const handleSelect = useCallback((band: number) => {
     setActiveLayer(band);
     setLoading(true);
-    setFadeKey(k => k + 1);
+    setPixelVals(null);
+
+    // Reset map view when layer changes
+    if (mapRef.current) {
+      mapRef.current.fitBounds([[20.85, 78.85], [21.45, 79.45]], { animate: true });
+    }
   }, []);
 
+  // Stabilized callbacks
+  const handleLayerLoad = useCallback(() => {
+    setLoading(false);
+  }, []);
+
+  const setPixelValsStable = useCallback((vals: number[] | null) => {
+    setPixelVals(prev => {
+      if (!vals) return null;
+      if (!prev) return [...vals];
+
+      if (vals.length !== prev.length) return [...vals];
+      for (let i = 0; i < vals.length; i++) {
+        if (vals[i] !== prev[i]) return [...vals];
+      }
+      return prev;
+    });
+  }, []);
+
+  const handlePixelHover = useCallback((vals: number[] | null) => {
+    setPixelValsStable(vals);
+  }, [setPixelValsStable]);
+
+  // Optimized mouse move
   const handleMouseMove = useCallback((e: MouseEvent) => {
-    setMousePos({ x: e.clientX, y: e.clientY });
+    mousePosRef.current = { x: e.clientX, y: e.clientY };
+
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      setHoverTick(t => t + 1);
+    });
   }, []);
 
   useEffect(() => {
     window.addEventListener("mousemove", handleMouseMove);
-    return () => window.removeEventListener("mousemove", handleMouseMove);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
   }, [handleMouseMove]);
 
   return (
@@ -842,25 +1053,42 @@ export default function Nagpur() {
           </div>
         )}
 
-        <div key={fadeKey} className="layer-fade" style={{ width: "100%", height: "100%" }}>
-          <MapContainer
-            center={[21.1458, 79.0882] as [number, number]}
-            zoom={10}
-            maxZoom={22}
-            style={{ width: "100%", height: "100vh" }}
-            zoomControl={false}
-          >
-            <BasemapTiles mapType={mapType} />
-            <GeoTiffLayer
-              key={activeLayer}
-              url="/Nagpur_2025.tif"
-              band={activeLayer}
-              onLoad={() => setLoading(false)}
-              onPixelHover={setPixelVals}
+        <MapContainer
+          bounds={[[20.85, 78.85], [21.45, 79.45]]}
+          zoom={11.5}
+          style={{ width: "100%", height: "100vh" }}
+          zoomControl={false}
+          maxZoom={18}
+          minZoom={9}
+        >
+          <MapInstance setMap={(map) => (mapRef.current = map)} />
+          <BasemapTiles mapType={mapType} />
+          
+          {/* Key prop forces remount when activeLayer changes */}
+          <GeoTiffLayer
+            key={`geotiff-${activeLayer}`}
+            url="/Nagpur_2025.tif"
+            band={activeLayer}
+            onLoad={handleLayerLoad}
+            onPixelHover={handlePixelHover}
+          />
+
+          {/* Nagpur District Boundary Overlay */}
+          {boundaryData && (
+            <GeoJSON
+              data={boundaryData}
+              style={{
+                color: "#111827",
+                weight: 1.5,
+                opacity: 0.7,
+                fillOpacity: 0,
+              }}
+              interactive={false}
             />
-            <MapControls mapType={mapType} setMapType={setMapType} />
-          </MapContainer>
-        </div>
+          )}
+
+          <MapControls mapType={mapType} setMapType={setMapType} />
+        </MapContainer>
 
         <LayersDropdown activeLayer={activeLayer} onSelect={handleSelect} />
 
@@ -877,28 +1105,14 @@ export default function Nagpur() {
           </div>
         </div>
 
-        <div style={{ position: "absolute", bottom: 24, left: 16, zIndex: 500 }}>
-          <Card style={{ padding: "12px 16px", minWidth: 212 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-              <Activity size={12} color="#0ea5e9" />
-              <span style={{ fontSize: 9.5, color: "#9ca3af", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em" }}>
-                Environmental Health
-              </span>
-            </div>
-            <p style={{ fontSize: 13, fontWeight: 700, color: "#111827", marginBottom: 9 }}>{activeMeta.name}</p>
-            <div style={{ display: "flex", height: 6, borderRadius: 99, overflow: "hidden", gap: 2 }}>
-              <div style={{ background: "#22c55e", width: `${stats.good ?? 50}%`, borderRadius: "99px 0 0 99px", transition: "width 0.5s" }} />
-              <div style={{ background: "#facc15", width: `${stats.medium ?? 30}%`, transition: "width 0.5s" }} />
-              <div style={{ background: "#ef4444", width: `${stats.bad ?? 20}%`, borderRadius: "0 99px 99px 0", transition: "width 0.5s" }} />
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 5 }}>
-              {([ ["Good", `${stats.good ?? 50}%`, "#16a34a"], ["Mid", `${stats.medium ?? 30}%`, "#ca8a04"], ["Poor", `${stats.bad ?? 20}%`, "#dc2626"] ] as [string, string, string][])
-                .map(([l, p, c]) => <span key={l} style={{ fontSize: 9, color: c, fontWeight: 600 }}>{l} {p}</span>)}
-            </div>
-          </Card>
-        </div>
+        <LayerLegend activeLayer={activeLayer} activeMeta={activeMeta} pixelVals={pixelVals} />
 
-        <MapTooltip pixelVals={pixelVals} mousePos={mousePos} activeLayer={activeLayer} />
+        <MapTooltip 
+          pixelVals={pixelVals} 
+          mousePos={mousePosRef.current} 
+          activeLayer={activeLayer} 
+          hoverTick={hoverTick}
+        />
       </div>
 
       {/* ── Right Analytics Panel ─────────────────────────────────────────── */}
